@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>MLB Head-to-Head</title>
+  <style>
+    table { border-collapse: collapse; margin-top: 20px; }
+    th, td { border: 1px solid #333; padding: 6px 10px; text-align: center; }
+    th { background: #eee; }
+    tbody th { text-align: left; padding-left: 12px; background: #f9f9f9; }
+    td:last-child { font-weight: bold; }
+  </style>
+</head>
+<body>
+
+<h2>Head-to-Head Records (Current MLB Season)</h2>
+
+<table id="table">
+<thead>
+<tr>
+  <th>Team</th>
+  <th>Reds</th>
+  <th>Cubs</th>
+  <th>White Sox</th>
+  <th>Diamondbacks</th>
+  <th>Net +/-</th>
+</tr>
+</thead>
+<tbody></tbody>
+</table>
+
+<script>
+// ✅ Explicit team order matching table headers + lookup map
+const TEAM_ORDER = [113, 112, 145, 109]; // Reds, Cubs, White Sox, Diamondbacks
+const TEAM_NAMES = {
+  113: "Reds",
+  112: "Cubs",
+  145: "White Sox",
+  109: "Diamondbacks"
+};
+
+// wins[A][B] = number of times A beat B
+const wins = {};
+const seenGames = new Set();
+
+// initialize win matrix
+TEAM_ORDER.forEach(a => {
+  wins[a] = {};
+  TEAM_ORDER.forEach(b => {
+    wins[a][b] = 0;
+  });
+});
+
+const season = new Date().getFullYear();
+const start = `${season}-03-01`;
+const end = new Date().toISOString().split("T")[0];
+
+// Fetch each team's schedule
+Promise.all(
+  TEAM_ORDER.map(id =>
+    fetch(`https://statsapi.mlb.com/api/v1/schedule?sportId=1&teamId=${id}&startDate=${start}&endDate=${end}&gameType=R`)
+      .then(r => r.json())
+  )
+).then(results => {
+
+  results.forEach(data => {
+    (data.dates || []).forEach(date => {
+      (date.games || []).forEach(game => {
+
+        // Deduplicate games
+        if (seenGames.has(game.gamePk)) return;
+        seenGames.add(game.gamePk);
+
+        // Only completed regular season games
+        if (!["Final", "Completed Early"].includes(game.status.detailedState)) return;
+
+        const home = game.teams.home.team.id;
+        const away = game.teams.away.team.id;
+
+        // Only process games between our 4 teams
+        if (!TEAM_ORDER.includes(home) || !TEAM_ORDER.includes(away)) return;
+
+        const hs = game.teams.home.score;
+        const as = game.teams.away.score;
+        if (hs == null || as == null) return;
+
+        const winner = hs > as ? home : away;
+        const loser  = hs > as ? away : home;
+
+        // Record the win
+        wins[winner][loser]++;
+      });
+    });
+  });
+
+  render();
+}).catch(err => {
+  console.error("Error fetching MLB data:", err);
+  document.querySelector("#table tbody").innerHTML = 
+    "<tr><td colspan='6'>Error loading data. Please try again later.</td></tr>";
+});
+
+function render() {
+  const tbody = document.querySelector("#table tbody");
+  tbody.innerHTML = ""; // Clear any existing content
+
+  // Render one row per team (in header order)
+  TEAM_ORDER.forEach(a => {
+    const tr = document.createElement("tr");
+
+    // Row header (team name)
+    const rowHeader = document.createElement("th");
+    rowHeader.textContent = TEAM_NAMES[a];
+    tr.appendChild(rowHeader);
+
+    let totalWins = 0;
+    let totalLosses = 0;
+
+    // Render one cell per opponent column (in header order)
+    TEAM_ORDER.forEach(b => {
+      const td = document.createElement("td");
+
+      if (a === b) {
+        td.textContent = "-";
+      } else {
+        const w = wins[a][b]; // A's wins vs B
+        const l = wins[b][a]; // A's losses vs B (B's wins vs A)
+        
+        td.textContent = `${w}-${l}`;
+        
+        totalWins += w;
+        totalLosses += l;
+      }
+      tr.appendChild(td);
+    });
+
+    // Net +/- column
+    const net = totalWins - totalLosses;
+    const tdNet = document.createElement("td");
+    tdNet.textContent = net > 0 ? `+${net}` : net;
+    tr.appendChild(tdNet);
+
+    tbody.appendChild(tr);
+  });
+}
+</script>
+
+</body>
+</html>
